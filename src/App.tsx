@@ -1,58 +1,84 @@
 import { useState, useEffect } from 'react';
 import { GameView } from './components/GameView';
 import { ApiKeyManager, getApiKey } from './components/ApiKeyManager';
-import { NARRATIVE_ENGINE_PROMPT } from '../config/engine'; // We need to read the prompt to extract the theme
+import { NARRATIVE_ENGINE_PROMPT } from './config/engine';
 import './styles/main.css';
 
 const SAVE_GAME_KEY = 'genesis-engine-manual-save';
 
-// Helper function to extract the theme object from the larger prompt string
-function getThemeFromPrompt(prompt) {
+// Safer theme extraction without eval
+function getThemeFromPrompt(prompt: string) {
   try {
-    // This looks for the specific line where the theme object is defined
-    const themeLine = prompt.match(/The visual theme for the UI is defined by the following object: (\{.*\})/);
-    if (themeLine && themeLine[1]) {
-      // It's not a perfect JSON parser, but it's robust for this specific structure.
-      // A more robust solution might use a dedicated parser if the structure gets more complex.
-      // For now, we use a trick: wrap it in parentheses and let eval parse it safely.
-      // This is safe because the string comes from our trusted AI generator.
-      const themeObject = (0, eval)('(' + themeLine[1] + ')');
-      return themeObject;
+    const themeMatch = prompt.match(/The visual theme for the UI is defined by the following object: (\{[^}]+\})/);
+    if (themeMatch && themeMatch[1]) {
+      // Parse the theme object manually to avoid eval
+      const themeStr = themeMatch[1];
+      const theme: Record<string, string> = {};
+      
+      // Extract key-value pairs from the object string
+      const pairs = themeStr.match(/(\w+):\s*['"]([^'"]+)['"]/g);
+      if (pairs) {
+        pairs.forEach(pair => {
+          const [key, value] = pair.split(':').map(s => s.trim().replace(/['"]/g, ''));
+          theme[key] = value;
+        });
+      }
+      return theme;
     }
   } catch (e) {
-    console.error("Could not parse game theme from narrative prompt.", e);
+    console.error("Could not parse game theme from narrative prompt:", e);
   }
-  return null; // Return null if not found or parsing fails
+  return null;
 }
 
 const GAME_THEME = getThemeFromPrompt(NARRATIVE_ENGINE_PROMPT);
 
+interface SaveData {
+  gameState: any;
+  history: any[];
+  lastSaved: string;
+}
+
+interface ActiveGame {
+  isNewGame: boolean;
+  saveData: SaveData | null;
+}
+
 function App() {
   const [hasApiKey, setHasApiKey] = useState(false);
-  const [saveData, setSaveData] = useState(null);
-  const [isGameActive, setIsGameActive] = useState(false);
+  const [saveData, setSaveData] = useState<SaveData | null>(null);
+  const [activeGame, setActiveGame] = useState<ActiveGame | null>(null);
 
-  // This effect applies the dynamic theme from the SCAP to the UI.
+  // Apply dynamic theme
   useEffect(() => {
     if (GAME_THEME && typeof GAME_THEME === 'object') {
       const root = document.documentElement;
-      for (const [key, value] of Object.entries(GAME_THEME)) {
+      Object.entries(GAME_THEME).forEach(([key, value]) => {
         // Convert camelCase to kebab-case for CSS variables
         const cssVarName = `--${key.replace(/([A-Z])/g, '-$1').toLowerCase()}`;
         root.style.setProperty(cssVarName, value);
-      }
+      });
     }
   }, []);
 
-  // On initial load, check for API key and any existing save data.
+  // Check for API key and save data on load
   useEffect(() => {
     const key = getApiKey();
     if (key) {
       setHasApiKey(true);
     }
-    const savedGame = localStorage.getItem(SAVE_GAME_KEY);
-    if (savedGame) {
-      setSaveData(JSON.parse(savedGame));
+    
+    try {
+      const savedGame = localStorage.getItem(SAVE_GAME_KEY);
+      if (savedGame) {
+        const parsed = JSON.parse(savedGame);
+        // Validate save data structure
+        if (parsed && parsed.gameState && parsed.history && parsed.lastSaved) {
+          setSaveData(parsed);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load save data:", e);
     }
   }, []);
 
@@ -65,19 +91,28 @@ function App() {
   };
 
   const continueGame = () => {
-    setActiveGame({ isNewGame: false, saveData: saveData });
+    if (saveData) {
+      setActiveGame({ isNewGame: false, saveData });
+    }
   };
 
   const exitToMainMenu = () => {
+    try {
       const savedGame = localStorage.getItem(SAVE_GAME_KEY);
       if (savedGame) {
-        setSaveData(JSON.parse(savedGame));
+        const parsed = JSON.parse(savedGame);
+        if (parsed && parsed.gameState && parsed.history && parsed.lastSaved) {
+          setSaveData(parsed);
+        }
       }
-      setActiveGame(null);
-  }
+    } catch (e) {
+      console.error("Failed to reload save data:", e);
+    }
+    setActiveGame(null);
+  };
 
-  // If a game session is active, render the GameView component.
-  if (isGameActive) {
+  // If a game session is active, render the GameView
+  if (activeGame) {
     return (
       <GameView
         key={Date.now()} // Force re-mount to ensure clean state
@@ -87,11 +122,10 @@ function App() {
     );
   }
 
-  // Otherwise, render the API key manager or the Main Menu.
+  // Otherwise, render the API key manager or Main Menu
   return (
     <div className="app-container">
       <header>
-        {/* The Game's title will be rendered inside the GameView now */}
         <h1>Genesis Engine</h1>
       </header>
       <main>
@@ -113,7 +147,7 @@ function App() {
             </div>
             {saveData && (
               <div className="save-info">
-                {saveData.gameState?.actTitle || saveData.gameState?.sceneTitle || 'Saved Game'}
+                {saveData.gameState?.sceneTitle || 'Saved Game'}
                 <br/>
                 <small>Saved: {new Date(saveData.lastSaved).toLocaleString()}</small>
               </div>
@@ -121,7 +155,7 @@ function App() {
           </div>
         )}
       </main>
-       <footer>
+      <footer>
         <p>This application is powered by the Genesis Engine. The generated game is a non-profit fan project.</p>
       </footer>
     </div>
