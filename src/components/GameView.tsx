@@ -4,34 +4,71 @@ import { PACING_THRESHOLD } from '../config/pacing';
 import { DisplayWindow } from './DisplayWindow';
 import { ChoiceButtons } from './ChoiceButtons';
 
+interface GameState {
+  description: string;
+  imagePrompt?: string;
+  choices?: string[];
+  sceneTitle?: string;
+  isSceneEnd?: boolean;
+  isMicroArcEnd?: boolean;
+  isChapterEnd?: boolean;
+  isPlayerDefeated?: boolean;
+  isGameWon?: boolean;
+  worldState?: any;
+  playerState?: {
+    name: string;
+    visualDescription: string;
+    inventory: string[];
+    skills: string[];
+    reputation: string;
+    [key: string]: any; // Allow for dynamic metrics like 'Hope', 'Trust', etc.
+  };
+}
+
+interface ConversationEntry {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
 // This is a MOCK API call for the boilerplate.
-async function getNextTurnAPI(conversationHistory) {
+async function getNextTurnAPI(conversationHistory: ConversationEntry[]): Promise<string> {
   console.log("Mock API Call Sent. History length:", conversationHistory.length);
-  const MOCK_START_GAME_RESPONSE = {
+  const MOCK_START_GAME_RESPONSE: GameState = {
     "description": "The Genesis Engine is ready. The world awaits your first choice. This is a placeholder until a real AI is connected.",
     "imagePrompt": "A single glowing door standing in a misty, featureless void.",
-    "choices": ["Begin the real adventure"], "sceneTitle": "The Threshold", "isSceneEnd": true,
+    "choices": ["Begin the real adventure"], 
+    "sceneTitle": "The Threshold", 
+    "isSceneEnd": true,
     "worldState": { "status": "Initialized" },
-    "playerState": { "name": "Protagonist", "visualDescription": "A person of indeterminate feature, waiting to be shaped by their choices.", "inventory": [], "skills": [], "reputation": "Unknown" }
+    "playerState": { 
+      "name": "Protagonist", 
+      "visualDescription": "A person of indeterminate feature, waiting to be shaped by their choices.", 
+      "inventory": [], 
+      "skills": [], 
+      "reputation": "Unknown" 
+    }
   };
   await new Promise(resolve => setTimeout(resolve, 500));
   return JSON.stringify(MOCK_START_GAME_RESPONSE);
 }
 
 export function GameView() {
-  const [gameState, setGameState] = useState(null);
+  const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [turnsInCurrentScene, setTurnsInCurrentScene] = useState(0);
-  const [conversationHistory, setConversationHistory] = useState([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>([]);
   const [devMode, setDevMode] = useState(false);
 
   useEffect(() => {
     const startGame = async () => {
-      if (!NARRATIVE_ENGINE_PROMPT) { setIsLoading(false); return; }
-      const initialHistory = [{ role: 'system', content: NARRATIVE_ENGINE_PROMPT }];
+      if (!NARRATIVE_ENGINE_PROMPT) { 
+        setIsLoading(false); 
+        return; 
+      }
+      const initialHistory: ConversationEntry[] = [{ role: 'system', content: NARRATIVE_ENGINE_PROMPT }];
       setConversationHistory(initialHistory);
       const responseJson = await getNextTurnAPI(initialHistory);
-      const response = JSON.parse(responseJson);
+      const response: GameState = JSON.parse(responseJson);
       setGameState(response);
       setConversationHistory(prev => [...prev, { role: 'assistant', content: responseJson }]);
       setIsLoading(false);
@@ -39,7 +76,7 @@ export function GameView() {
     startGame();
   }, []);
 
-  const handleChoice = async (choiceIndex) => {
+  const handleChoice = async (choiceIndex: number) => {
     if (isLoading || !gameState?.choices) return;
     setIsLoading(true);
 
@@ -50,15 +87,18 @@ export function GameView() {
       nextUserPrompt = `[URGENT PACING DIRECTIVE: The player has been in this scene for ${turnsInCurrentScene} turns. You MUST trigger 'isSceneEnd: true' in your next response.]\n${nextUserPrompt}`;
     }
 
-    const newHistory = [...conversationHistory, { role: 'user', content: nextUserPrompt }];
+    const newHistory: ConversationEntry[] = [...conversationHistory, { role: 'user', content: nextUserPrompt }];
     setConversationHistory(newHistory);
 
     const responseJson = await getNextTurnAPI(newHistory);
-    const response = JSON.parse(responseJson);
+    const response: GameState = JSON.parse(responseJson);
     setGameState(response);
 
-    if (response.isSceneEnd) { setTurnsInCurrentScene(0); } 
-    else { setTurnsInCurrentScene(prev => prev + 1); }
+    if (response.isSceneEnd) { 
+      setTurnsInCurrentScene(0); 
+    } else { 
+      setTurnsInCurrentScene(prev => prev + 1); 
+    }
 
     setConversationHistory(prev => [...prev, { role: 'assistant', content: responseJson }]);
     setIsLoading(false);
@@ -66,12 +106,17 @@ export function GameView() {
 
   return (
     <div className="game-view">
-        <DisplayWindow gameState={gameState} isLoading={isLoading} />
-        <ChoiceButtons choices={gameState?.choices} onChoice={handleChoice} disabled={isLoading} />
-        <div className="dev-mode-toggle">
-            <label><input type="checkbox" checked={devMode} onChange={() => setDevMode(!devMode)} /> Dev Mode</label>
-        </div>
-        {devMode && gameState && (<pre className="dev-mode-output">{JSON.stringify(gameState, null, 2)}</pre>)}
+      <DisplayWindow gameState={gameState} isLoading={isLoading} />
+      <ChoiceButtons choices={gameState?.choices} onChoice={handleChoice} disabled={isLoading} />
+      <div className="dev-mode-toggle">
+        <label>
+          <input type="checkbox" checked={devMode} onChange={() => setDevMode(!devMode)} /> 
+          Dev Mode
+        </label>
+      </div>
+      {devMode && gameState && (
+        <pre className="dev-mode-output">{JSON.stringify(gameState, null, 2)}</pre>
+      )}
     </div>
   );
 }
