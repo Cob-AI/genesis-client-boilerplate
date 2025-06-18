@@ -1,232 +1,233 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { NARRATIVE_ENGINE_PROMPT } from '../config/engine';
 import { PACING_THRESHOLD } from '../config/pacing';
-import { getApiKey } from './ApiKeyManager';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { DisplayWindow } from './DisplayWindow';
-import { ChoiceButtons } from './ChoiceButtons';
-import type { GameState, ConversationMessage, GameViewProps } from '../types.ts';
+import { getNextTurn } from '../services/geminiService';
+import { SaveGameService } from '../services/saveGameService';
+import { extractGameMetadata } from '../utils/themeExtractor';
+import { StoryDisplay } from './StoryDisplay';
+import { ChoiceButton } from './ChoiceButton';
+import { DeveloperFooter } from './DeveloperFooter';
+import { FeedbackButton } from './FeedbackButton';
+import type { GameState, SaveData } from '../types';
 
-const SAVE_GAME_KEY = 'genesis-engine-manual-save';
-
-async function getNextTurnAPI(conversationHistory: ConversationMessage[]): Promise<string> {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    return JSON.stringify({ 
-      description: "CRITICAL ERROR: API Key missing. Please return to the main menu and provide your API key.", 
-      choices: [] 
-    });
-  }
-  
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
-    const lastMessage = conversationHistory[conversationHistory.length - 1];
-    
-    const chat = model.startChat({ 
-      history: conversationHistory.slice(0, -1).map(msg => ({
-        role: msg.role === 'system' ? 'user' : msg.role,
-        parts: [{ text: msg.content }]
-      }))
-    });
-    
-    const result = await chat.sendMessage(lastMessage.content);
-    return result.response.text();
-  } catch (error: any) {
-    console.error("API Error:", error);
-    
-    // Parse specific Gemini API errors
-    let errorMessage = 'Unknown error occurred';
-    
-    if (error.message?.includes('API_KEY_INVALID')) {
-      errorMessage = 'Invalid API key. Please return to the main menu and check your key.';
-    } else if (error.message?.includes('RATE_LIMIT_EXCEEDED')) {
-      errorMessage = 'Rate limit exceeded. Please wait a moment before continuing.';
-    } else if (error.message?.includes('SAFETY')) {
-      errorMessage = 'Content was blocked by safety filters. Try a different choice.';
-    } else if (error.message?.includes('fetch')) {
-      errorMessage = 'Network error. Please check your internet connection.';
-    } else if (error.message) {
-      errorMessage = error.message;
-    }
-    
-    return JSON.stringify({ 
-      description: `Error: AI Communication Failed. ${errorMessage}`, 
-      choices: ["Try Again", "Return to Main Menu"] 
-    });
-  }
+interface GameViewProps {
+  initialSaveData: SaveData | null;
+  onExit: () => void;
 }
 
 export function GameView({ initialSaveData, onExit }: GameViewProps) {
-  const [gameState, setGameState] = useState<GameState | null>(initialSaveData?.gameState || null);
-  const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>(
-    initialSaveData?.history || []
-  );
-  const [isLoading, setIsLoading] = useState(!initialSaveData);
+  const [gameState, setGameState] = useState<GameState | null>(null);
+  const [conversationHistory, setConversationHistory] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [turnsInCurrentScene, setTurnsInCurrentScene] = useState(0);
-  const [showSaveMessage, setShowSaveMessage] = useState(false);
-  const [devMode, setDevMode] = useState(false);
+  const [totalChoices, setTotalChoices] = useState(0);
+  const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const metadata = extractGameMetadata();
+  const saveConfirmationTimer = useRef<number | null>(null);
 
-  // Start a new game if no save data was provided
+  // Initialize game
   useEffect(() => {
-    const startGame = async () => {
-      if (initialSaveData) return;
-      
-      setIsLoading(true);
-      setError(null);
-      
-      try {
-        const initialHistory: ConversationMessage[] = [
-          { role: 'system', content: NARRATIVE_ENGINE_PROMPT }
-        ];
-        const firstUserMessage: ConversationMessage = { 
-          role: 'user', 
-          content: 'Begin the adventure.' 
-        };
-        const fullHistory = [...initialHistory, firstUserMessage];
-        
-        const responseJson = await getNextTurnAPI(fullHistory);
-        const response = JSON.parse(responseJson);
-        
-        setGameState(response);
-        setConversationHistory([
-          ...fullHistory, 
-          { role: 'assistant', content: responseJson }
-        ]);
-      } catch (e: any) {
-        console.error("Failed to start game:", e);
-        setError("Failed to start the game. Please check your API key and try again.");
-      } finally {
-        setIsLoading(false);
+    const initGame = async () => {
+      if (initialSaveData) {
+        // Load from save
+        setGameState(initialSaveData.gameState);
+        setConversationHistory(initialSaveData.conversationHistory);
+        setTurnsInCurrentScene(initialSaveData.turnsInCurrentScene || 0);
+        setTotalChoices(initialSaveData.totalChoices || 0);
+      } else {
+        // Start new game
+        await startNewGame();
       }
     };
-    
-    startGame();
-  }, [initialSaveData]);
-  
-  const handleSave = () => {
-    if (!gameState) return;
-    
-    try {
-      const saveData = { 
-        gameState, 
-        history: conversationHistory, 
-        lastSaved: new Date().toISOString() 
-      };
-      localStorage.setItem(SAVE_GAME_KEY, JSON.stringify(saveData));
-      setShowSaveMessage(true);
-      setTimeout(() => setShowSaveMessage(false), 2000);
-    } catch (e) {
-      console.error("Failed to save game:", e);
-      alert("Failed to save game. Your browser may not support local storage.");
-    }
-  };
+    initGame();
+  }, []);
 
-  const handleChoice = async (choiceIndex: number) => {
-    if (isLoading || !gameState?.choices || choiceIndex >= gameState.choices.length) return;
-    
-    // Handle special error recovery choices
-    if (error && choiceIndex === 1) {
-      onExit();
-      return;
-    }
-    
+  const startNewGame = async () => {
     setIsLoading(true);
     setError(null);
     
     try {
-      let nextUserPrompt = `Player chose: "${gameState.choices[choiceIndex]}"`;
+      const initialHistory = [{ role: 'system', content: NARRATIVE_ENGINE_PROMPT }];
+      const result = await getNextTurn(initialHistory, 'Begin the adventure.', 0);
       
-      // Add pacing directive if needed
-      if (turnsInCurrentScene >= PACING_THRESHOLD) {
-        nextUserPrompt = `[URGENT PACING DIRECTIVE: The current scene has lasted ${turnsInCurrentScene} turns. Please progress the story to a new scene or situation immediately.]\n${nextUserPrompt}`;
+      if (result.error) {
+        setError(result.error);
+        return;
       }
       
-      const newUserMessage: ConversationMessage = { 
-        role: 'user', 
-        content: nextUserPrompt 
-      };
-      const newHistory = [...conversationHistory, newUserMessage];
-      const responseJson = await getNextTurnAPI(newHistory);
-      const response = JSON.parse(responseJson);
-      
-      setGameState(response);
-      setConversationHistory([
-        ...newHistory, 
-        { role: 'assistant', content: responseJson }
-      ]);
-      
-      // Update turn counter
-      if (response.isSceneEnd) {
-        setTurnsInCurrentScene(0);
-      } else {
-        setTurnsInCurrentScene(prev => prev + 1);
+      if (result.gameState) {
+        setGameState(result.gameState);
+        setConversationHistory(result.conversationHistory);
       }
-      
-      // Clear save on game over
-      if (response.isGameWon || response.isPlayerDefeated) {
-        localStorage.removeItem(SAVE_GAME_KEY);
-      }
-    } catch (e: any) {
-      console.error("Failed to process choice:", e);
-      setError("Failed to process your choice. Please try again.");
+    } catch (e) {
+      setError('Failed to start the game. Please check your API key and try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <div className="game-view">
-      <button onClick={onExit} className="exit-button">← Main Menu</button>
+  const handleChoice = async (choiceText: string) => {
+    if (!gameState || isLoading) return;
+    
+    setIsLoading(true);
+    setError(null);
+    setTotalChoices(prev => prev + 1);
+    
+    try {
+      const result = await getNextTurn(
+        conversationHistory,
+        choiceText,
+        turnsInCurrentScene >= PACING_THRESHOLD ? turnsInCurrentScene : 0
+      );
       
-      {error && (
-        <div className="error-message">
-          <p>{error}</p>
-        </div>
-      )}
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
       
-      <DisplayWindow gameState={gameState} isLoading={isLoading} />
-      <ChoiceButtons 
-        choices={gameState?.choices} 
-        onChoice={handleChoice} 
-        disabled={isLoading} 
-      />
-      
-      <footer className="game-footer">
-        <div className="game-info">
-          {gameState?.actTitle && `${gameState.actTitle} • `}
-          {gameState?.sceneTitle}
-          {turnsInCurrentScene >= PACING_THRESHOLD - 1 && !gameState?.isSceneEnd && (
-            <span className="pacing-warning"> (Scene ending soon...)</span>
-          )}
-        </div>
-        <div className="save-container">
-          {showSaveMessage && <div className="save-notification">Saved!</div>}
-          <button onClick={handleSave} className="save-button" title="Save Progress">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M19 21H5C3.89543 21 3 20.1046 3 19V5C3 3.89543 3.89543 3 5 3H16L21 8V19C21 20.1046 20.1046 21 19 21Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M17 21V13H7V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M7 3V8H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-        </div>
-      </footer>
+      if (result.gameState) {
+        setGameState(result.gameState);
+        setConversationHistory(result.conversationHistory);
+        
+        // Update turn counter
+        if (result.gameState.isSceneEnd) {
+          setTurnsInCurrentScene(0);
+        } else {
+          setTurnsInCurrentScene(prev => prev + 1);
+        }
+        
+        // Clear save on game end
+        if (result.gameState.isGameWon || result.gameState.isPlayerDefeated) {
+          SaveGameService.deleteSave();
+        }
+      }
+    } catch (e) {
+      setError('Failed to process your choice. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-      <div className="dev-mode-toggle">
-        <label>
-          <input 
-            type="checkbox" 
-            checked={devMode} 
-            onChange={() => setDevMode(!devMode)} 
-          /> Dev Mode
-        </label>
-      </div>
+  const handleSave = () => {
+    if (!gameState) return;
+    
+    const saved = SaveGameService.saveGame({
+      gameState,
+      conversationHistory,
+      turnsInCurrentScene,
+      totalChoices,
+      sessionStartTime: Date.now()
+    });
+    
+    if (saved) {
+      setShowSaveConfirmation(true);
       
-      {devMode && gameState && (
-        <pre className="dev-mode-output">
-          {JSON.stringify(gameState, null, 2)}
-        </pre>
+      if (saveConfirmationTimer.current) {
+        clearTimeout(saveConfirmationTimer.current);
+      }
+      
+      saveConfirmationTimer.current = window.setTimeout(() => {
+        setShowSaveConfirmation(false);
+      }, 3000);
+    }
+  };
+
+  const chapterInfo = gameState ? 
+    `${gameState.actTitle || 'Chapter 1'} • ${gameState.sceneTitle || 'Beginning'}` : 
+    '';
+
+  return (
+    <div className="min-h-screen bg-primary text-primary flex flex-col items-center p-4 pt-6 sm:pt-8 pb-8">
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeIn {
+          animation: fadeIn 0.5s ease-out forwards;
+        }
+      `}</style>
+      
+      <main className="container mx-auto max-w-2xl w-full flex flex-col flex-grow pb-8">
+        <button 
+          onClick={onExit} 
+          className="mb-4 text-secondary hover:text-accent transition-colors"
+        >
+          ← Main Menu
+        </button>
+        
+        {error && (
+          <div className="bg-error/20 border border-error rounded-lg p-4 mb-4 text-error">
+            {error}
+          </div>
+        )}
+        
+        <StoryDisplay
+          description={gameState?.description || ''}
+          imageUrl={gameState?.imagePrompt ? 
+            `https://image.pollinations.ai/prompt/${encodeURIComponent(gameState.imagePrompt)}?width=1024&height=1024&nologo=true` : 
+            null
+          }
+          isLoadingImage={false}
+          sceneTitle={gameState?.sceneTitle || ''}
+        />
+        
+        {gameState && !gameState.isGameWon && !gameState.isPlayerDefeated && (
+          <div className="mt-2 flex flex-col gap-1">
+            {gameState.choices?.map((choice: any, index: number) => (
+              <ChoiceButton
+                key={choice.id || index}
+                choice={{ id: choice.id || `choice-${index}`, text: choice.text || choice }}
+                onClick={handleChoice}
+                disabled={isLoading}
+              />
+            ))}
+          </div>
+        )}
+        
+        {isLoading && (
+          <div className="text-center text-secondary mt-4">
+            <p>The story continues...</p>
+          </div>
+        )}
+        
+        {(gameState?.isGameWon || gameState?.isPlayerDefeated) && (
+          <div className="mt-6 text-center">
+            <h2 className="text-2xl text-accent mb-4">
+              {gameState.isGameWon ? '🎉 Victory!' : '💀 Defeated'}
+            </h2>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-6 py-3 bg-accent hover:bg-accent-hover text-primary-dark font-bold text-lg rounded-md transition-all duration-150"
+            >
+              Play Again
+            </button>
+            <p className="text-secondary text-sm mt-2">
+              You made {totalChoices} choices in this story
+            </p>
+          </div>
+        )}
+        
+        <DeveloperFooter
+          currentActTitle={gameState?.actTitle || 'Chapter 1'}
+          currentSceneTitle={gameState?.sceneTitle || 'Beginning'}
+          onSaveClick={handleSave}
+          showSaveConfirmation={showSaveConfirmation}
+        />
+      </main>
+      
+      <footer className="w-full max-w-2xl mx-auto text-center px-4 mt-4 pb-4">
+        <p className="text-xs text-secondary">
+          {metadata?.disclaimer || 'This is an unofficial fan project.'}
+        </p>
+      </footer>
+      
+      {gameState && !isLoading && (
+        <FeedbackButton
+          currentScene={gameState.sceneTitle || ''}
+          currentAct={gameState.actTitle || ''}
+        />
       )}
     </div>
   );

@@ -1,2 +1,2 @@
-// This is the placeholder file that the AI will populate.
+// This is where the SCAP's Section C content goes
 export const NARRATIVE_ENGINE_PROMPT = ``;

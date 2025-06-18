@@ -1,3 +1,2 @@
-// The AI will be instructed to modify this value based on user's choice.
-// Default: Standard
-export const PACING_THRESHOLD = 3; 
+// This will be set by the AI based on PACING_CADENCE
+export const PACING_THRESHOLD = 3;
