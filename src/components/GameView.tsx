@@ -5,7 +5,7 @@ import { getApiKey } from './ApiKeyManager';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { DisplayWindow } from './DisplayWindow';
 import { ChoiceButtons } from './ChoiceButtons';
-import type { GameState, ConversationMessage, GameViewProps } from '../types';
+import type { GameState, ConversationMessage, GameViewProps } from '../types.ts';
 
 const SAVE_GAME_KEY = 'genesis-engine-manual-save';
 
@@ -34,8 +34,24 @@ async function getNextTurnAPI(conversationHistory: ConversationMessage[]): Promi
     return result.response.text();
   } catch (error: any) {
     console.error("API Error:", error);
+    
+    // Parse specific Gemini API errors
+    let errorMessage = 'Unknown error occurred';
+    
+    if (error.message?.includes('API_KEY_INVALID')) {
+      errorMessage = 'Invalid API key. Please return to the main menu and check your key.';
+    } else if (error.message?.includes('RATE_LIMIT_EXCEEDED')) {
+      errorMessage = 'Rate limit exceeded. Please wait a moment before continuing.';
+    } else if (error.message?.includes('SAFETY')) {
+      errorMessage = 'Content was blocked by safety filters. Try a different choice.';
+    } else if (error.message?.includes('fetch')) {
+      errorMessage = 'Network error. Please check your internet connection.';
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+    
     return JSON.stringify({ 
-      description: `Error: AI Communication Failed. ${error.message || 'Unknown error occurred'}`, 
+      description: `Error: AI Communication Failed. ${errorMessage}`, 
       choices: ["Try Again", "Return to Main Menu"] 
     });
   }
@@ -181,6 +197,9 @@ export function GameView({ initialSaveData, onExit }: GameViewProps) {
         <div className="game-info">
           {gameState?.actTitle && `${gameState.actTitle} • `}
           {gameState?.sceneTitle}
+          {turnsInCurrentScene >= PACING_THRESHOLD - 1 && !gameState?.isSceneEnd && (
+            <span className="pacing-warning"> (Scene ending soon...)</span>
+          )}
         </div>
         <div className="save-container">
           {showSaveMessage && <div className="save-notification">Saved!</div>}

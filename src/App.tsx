@@ -6,29 +6,39 @@ import './styles/main.css';
 
 const SAVE_GAME_KEY = 'genesis-engine-manual-save';
 
-// Safer theme extraction without eval
-function getThemeFromPrompt(prompt: string) {
+// Robust theme extraction without eval
+function getThemeFromPrompt(prompt: string): Record<string, string> | null {
   try {
-    const themeMatch = prompt.match(/The visual theme for the UI is defined by the following object: (\{[^}]+\})/);
-    if (themeMatch && themeMatch[1]) {
-      // Parse the theme object manually to avoid eval
-      const themeStr = themeMatch[1];
-      const theme: Record<string, string> = {};
-      
-      // Extract key-value pairs from the object string
-      const pairs = themeStr.match(/(\w+):\s*['"]([^'"]+)['"]/g);
-      if (pairs) {
-        pairs.forEach(pair => {
-          const [key, value] = pair.split(':').map(s => s.trim().replace(/['"]/g, ''));
-          theme[key] = value;
-        });
+    // Find the theme object in the prompt
+    const themeMatch = prompt.match(/The visual theme for the UI is defined by the following object:\s*(\{[^}]+\})/s);
+    if (!themeMatch || !themeMatch[1]) return null;
+    
+    const themeStr = themeMatch[1];
+    const theme: Record<string, string> = {};
+    
+    // More robust regex to handle various formatting
+    // Matches: key: 'value', key: "value", key:'value', etc.
+    const regex = /(\w+)\s*:\s*['"]([^'"]+)['"]/g;
+    let match;
+    
+    while ((match = regex.exec(themeStr)) !== null) {
+      const [, key, value] = match;
+      if (key && value) {
+        theme[key] = value;
       }
-      return theme;
     }
+    
+    // Validate we got at least some theme properties
+    if (Object.keys(theme).length === 0) {
+      console.warn("Theme object found but no properties extracted");
+      return null;
+    }
+    
+    return theme;
   } catch (e) {
-    console.error("Could not parse game theme from narrative prompt:", e);
+    console.error("Failed to parse game theme from narrative prompt:", e);
+    return null;
   }
-  return null;
 }
 
 const GAME_THEME = getThemeFromPrompt(NARRATIVE_ENGINE_PROMPT);

@@ -300,6 +300,20 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+}
+
+.image-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+  color: var(--text-secondary);
+}
+
+.image-loading p {
+  margin: 0;
+  font-size: 0.9rem;
 }
 
 .scene-image {
@@ -424,6 +438,13 @@ button:disabled {
   flex: 1;
 }
 
+.pacing-warning {
+  color: var(--accent);
+  font-style: italic;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
 .save-container {
   display: flex;
   align-items: center;
@@ -499,6 +520,32 @@ button:disabled {
   overflow-x: auto;
   max-height: 300px;
   overflow-y: auto;
+}
+
+/* Game end indicator */
+.game-end-indicator {
+  margin-top: var(--spacing-lg);
+  padding: var(--spacing-md);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.game-end-indicator.victory {
+  background-color: rgba(81, 207, 102, 0.2);
+  border: 2px solid var(--success-color);
+  color: var(--success-color);
+}
+
+.game-end-indicator.defeat {
+  background-color: rgba(255, 107, 107, 0.2);
+  border: 2px solid var(--error-color);
+  color: var(--error-color);
+}
+
+.game-end-indicator p {
+  margin: 0;
 }
 
 /* Footer */

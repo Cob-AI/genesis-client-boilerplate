@@ -41,12 +41,33 @@ export function ApiKeyManager({ onKeyProvided }: ApiKeyManagerProps) {
     setIsValidating(true);
     setError('');
     
-    // Store the key and notify parent
+    // Test the API key with a simple call
     try {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(trimmedKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      
+      // Quick test prompt
+      const result = await model.generateContent("Say 'ok' if this API key works.");
+      const response = result.response.text();
+      
+      if (!response) {
+        throw new Error('No response from API');
+      }
+      
+      // Key is valid, store it
       sessionStorage.setItem(API_KEY_SESSION_STORAGE_KEY, trimmedKey);
       onKeyProvided();
-    } catch (e) {
-      setError('Failed to store API key. Please check your browser settings.');
+    } catch (e: any) {
+      console.error('API key validation failed:', e);
+      if (e.message?.includes('API_KEY_INVALID')) {
+        setError('Invalid API key. Please check and try again.');
+      } else if (e.message?.includes('RATE_LIMIT')) {
+        setError('Rate limit exceeded. Please wait a moment and try again.');
+      } else {
+        setError('Failed to validate API key. Please ensure it\'s correct and try again.');
+      }
+    } finally {
       setIsValidating(false);
     }
   };
